@@ -1,0 +1,1 @@
+# fri-stock-analysis
