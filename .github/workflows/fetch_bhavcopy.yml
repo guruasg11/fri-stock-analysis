@@ -1,0 +1,41 @@
+name: NSE Bhavcopy – Daily Fetch
+
+on:
+  push:
+    branches: [ main, master ]   # triggers on first deploy
+  schedule:
+    - cron: '0 11 * * 1-5'       # 4:30 PM IST (11:00 UTC) Mon-Fri
+  workflow_dispatch:              # manual trigger button in GitHub UI
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write             # needed to commit and push data files
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install requests pandas
+
+      - name: Fetch NSE bhavcopy (backfill or daily)
+        run: python fetch_bhavcopy.py
+
+      - name: Commit and push data files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "EOD data update: $(date +'%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
