@@ -17,9 +17,9 @@ from pathlib import Path
 import requests
 import pandas as pd
 
-STOCK_DIR = Path("data/stocks")
+STOCK_DIR = Path("data")
 INDEX_DIR = Path("data/index")
-STOCK_DIR.mkdir(parents=True, exist_ok=True)
+
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 HEADERS = {
