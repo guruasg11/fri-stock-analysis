@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, master ]
   schedule:
-    - cron: '0 11 * * 1-5'
+    - cron: '0 11 * * 1-5'   # 4:30 PM IST (11:00 UTC) Mon-Fri
   workflow_dispatch:
 
 jobs:
@@ -25,13 +25,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: pip install requests pandas
 
-      - name: Fetch NSE bhavcopy
+      - name: Fetch NSE bhavcopy (stocks + indices)
         run: python fetch_bhavcopy.py
 
-      - name: Commit and push data files
+      - name: Commit and push data
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -39,6 +39,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "Nothing new to commit."
           else
-            git commit -m "EOD data update: $(date +'%Y-%m-%d %H:%M UTC')"
+            git commit -m "EOD data: $(date +'%Y-%m-%d %H:%M UTC')"
             git push origin HEAD:${{ github.ref_name }}
           fi
