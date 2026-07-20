@@ -1,178 +1,200 @@
 """
 fetch_bhavcopy.py
 ─────────────────
-Run by GitHub Actions on every push AND daily at 4:30 PM IST.
+Downloads two types of NSE EOD data daily:
+  1. Stock bhavcopy  → data/stocks/YYYY-MM-DD.csv
+  2. Index bhavcopy  → data/index/YYYY-MM-DD.csv
 
-First run (data/ is empty):
-    Downloads ~290 business days (~1 full year) of bhavcopy files.
-    NSE holidays are silently skipped (their files simply don't exist).
-
-Subsequent runs:
-    Downloads only the current/most-recent trading day file.
-    Already-downloaded files are never re-fetched.
-
-Keeps at most 280 files (just over 1 year) to limit repo size.
+On first run (empty data/): downloads full 1-year backfill (~260 days each).
+On daily runs: downloads only missing recent dates.
+Keeps max 280 files in each folder.
 """
 
-import io, os, sys, time, zipfile
+import io, time, zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
 import requests
 import pandas as pd
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+STOCK_DIR = Path("data/stocks")
+INDEX_DIR = Path("data/index")
+STOCK_DIR.mkdir(parents=True, exist_ok=True)
+INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── NSE session with required headers and cookie ─────────────────────────────
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept":          "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer":         "https://www.nseindia.com/",
+}
+
+
 def make_session():
     s = requests.Session()
-    s.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Accept":          "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer":         "https://www.nseindia.com/",
-    })
-    # Prime the session to get NSE cookie (needed to avoid 403)
-    for attempt in range(3):
+    s.headers.update(HEADERS)
+    for _ in range(3):
         try:
             s.get("https://www.nseindia.com", timeout=15)
             time.sleep(1)
             break
-        except Exception as e:
-            print(f"  Cookie fetch attempt {attempt+1} failed: {e}")
+        except Exception:
             time.sleep(3)
     return s
 
 
-# ── Download one day's bhavcopy, return DataFrame or None ────────────────────
-def fetch_one_day(session, dt: date):
+def fetch_stock_bhavcopy(session, dt: date):
+    """Returns clean stock DataFrame or None."""
     ds = dt.strftime("%Y%m%d")
-
-    # Try new format first (2023+)
-    url_new = (
-        f"https://nsearchives.nseindia.com/content/cm/"
-        f"BhavCopy_NSE_CM_0_0_0_{ds}_F_0000.csv.zip"
-    )
+    # New format (2023+)
+    url = (f"https://nsearchives.nseindia.com/content/cm/"
+           f"BhavCopy_NSE_CM_0_0_0_{ds}_F_0000.csv.zip")
     try:
-        r = session.get(url_new, timeout=30)
+        r = session.get(url, timeout=30)
         if r.status_code == 200:
             with zipfile.ZipFile(io.BytesIO(r.content)) as z:
                 with z.open(z.namelist()[0]) as f:
                     df = pd.read_csv(f, low_memory=False)
-            df = df.rename(columns=lambda c: c.strip())
-            # Keep only EQ series and needed columns
+            df.columns = df.columns.str.strip()
             if "SctySrs" in df.columns:
                 df = df[df["SctySrs"].astype(str).str.strip() == "EQ"]
-            needed = ["TckrSymb","SctySrs","HghPric","LwPric","ClsPric","PrvsClsgPric","TtlTradgVol"]
-            df = df[[c for c in needed if c in df.columns]].copy()
+            keep = ["TckrSymb","SctySrs","HghPric","LwPric","ClsPric","PrvsClsgPric","TtlTradgVol"]
+            df = df[[c for c in keep if c in df.columns]].copy()
             df["TradDt"] = dt.isoformat()
             return df
-    except Exception as e:
-        pass  # fall through to old format
+    except Exception:
+        pass
 
-    # Try old format (fallback)
-    ds_old = dt.strftime("%d%m%Y")
-    url_old = (
-        f"https://nsearchives.nseindia.com/products/content/"
-        f"sec_bhavdata_full_{ds_old}.csv"
-    )
+    # Old format fallback
+    ds2 = dt.strftime("%d%m%Y")
+    url2 = (f"https://nsearchives.nseindia.com/products/content/"
+            f"sec_bhavdata_full_{ds2}.csv")
     try:
-        r = session.get(url_old, timeout=30)
+        r = session.get(url2, timeout=30)
         if r.status_code == 200:
             df = pd.read_csv(io.StringIO(r.text), low_memory=False)
             df.columns = df.columns.str.strip()
             df = df.rename(columns={
-                "SYMBOL":   "TckrSymb", "SERIES":   "SctySrs",
-                "HIGH":     "HghPric",  "LOW":      "LwPric",
-                "CLOSE":    "ClsPric",  "PREVCLOSE":"PrvsClsgPric",
+                "SYMBOL":"TckrSymb","SERIES":"SctySrs",
+                "HIGH":"HghPric","LOW":"LwPric",
+                "CLOSE":"ClsPric","PREVCLOSE":"PrvsClsgPric",
                 "TOTTRDQTY":"TtlTradgVol",
             })
             if "SctySrs" in df.columns:
                 df = df[df["SctySrs"].astype(str).str.strip() == "EQ"]
-            needed = ["TckrSymb","SctySrs","HghPric","LwPric","ClsPric","PrvsClsgPric","TtlTradgVol"]
-            df = df[[c for c in needed if c in df.columns]].copy()
+            keep = ["TckrSymb","SctySrs","HghPric","LwPric","ClsPric","PrvsClsgPric","TtlTradgVol"]
+            df = df[[c for c in keep if c in df.columns]].copy()
             df["TradDt"] = dt.isoformat()
             return df
-    except Exception as e:
+    except Exception:
         pass
+    return None
 
-    return None  # This date is a holiday or weekend
+
+def fetch_index_bhavcopy(session, dt: date):
+    """Returns index closing DataFrame or None."""
+    ds = dt.strftime("%d%m%Y")
+    url = f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{ds}.csv"
+    try:
+        r = session.get(url, timeout=30)
+        if r.status_code == 200:
+            df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+            df.columns = df.columns.str.strip()
+            if "Index Name" not in df.columns:
+                return None
+            df = df.rename(columns={"Index Name": "TckrSymb", "Closing": "ClsPric"})
+            df["TradDt"] = dt.isoformat()
+            df["ClsPric"] = pd.to_numeric(df["ClsPric"], errors="coerce")
+            return df[["TradDt","TckrSymb","ClsPric"]].dropna(subset=["ClsPric"])
+    except Exception:
+        pass
+    return None
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+def get_dates_to_fetch(folder: Path, is_backfill: bool) -> list:
+    existing = {f.stem for f in folder.glob("*.csv")}
+    today    = date.today()
+    if is_backfill:
+        start = today - timedelta(days=400)
+        end   = today - timedelta(days=1)
+    else:
+        start = today - timedelta(days=7)
+        end   = today
+    dates = [d.date() for d in pd.bdate_range(start=start, end=end)]
+    return [d for d in dates if d.isoformat() not in existing]
+
+
+def cleanup(folder: Path, keep: int = 280):
+    files = sorted(folder.glob("*.csv"))
+    for old in files[:-keep]:
+        old.unlink()
+        print(f"  [DEL] {old.name}")
+
+
 def main():
-    existing = {f.stem for f in DATA_DIR.glob("*.csv")}
-    is_backfill = len(existing) == 0
+    stock_existing = list(STOCK_DIR.glob("*.csv"))
+    index_existing = list(INDEX_DIR.glob("*.csv"))
+    is_backfill    = len(stock_existing) == 0
 
     if is_backfill:
-        print("=== FIRST RUN: Backfilling 1 year of NSE data ===")
-        today  = date.today()
-        start  = today - timedelta(days=400)   # ~14 months back (covers holidays)
-        end    = today - timedelta(days=1)      # up to yesterday
-        dates  = [
-            d.date()
-            for d in pd.bdate_range(start=start, end=end)
-        ]
-        print(f"Will attempt {len(dates)} business days ({start} → {end})")
+        print("=== FIRST RUN: Backfilling 1 year ===")
     else:
         print("=== DAILY UPDATE ===")
-        # Try today and last 5 business days to catch up if a day was missed
-        today = date.today()
-        dates = [
-            d.date()
-            for d in pd.bdate_range(
-                start=today - timedelta(days=7),
-                end=today
-            )
-        ]
-        dates = [d for d in dates if d.isoformat() not in existing]
-        if not dates:
-            print("All recent trading days already downloaded. Nothing to do.")
-            return
-        print(f"Missing {len(dates)} recent trading days: {dates}")
 
-    session    = make_session()
-    saved      = 0
-    skipped    = 0    # holidays / weekends with no bhavcopy
+    session = make_session()
 
-    for i, dt in enumerate(dates):
-        out = DATA_DIR / f"{dt.isoformat()}.csv"
-        if out.exists():
-            continue
+    stock_dates = get_dates_to_fetch(STOCK_DIR, is_backfill)
+    index_dates = get_dates_to_fetch(INDEX_DIR, is_backfill)
+    all_dates   = sorted(set(stock_dates) | set(index_dates))
 
-        if is_backfill and i % 20 == 0:
-            # Refresh cookie every 20 requests during long backfill
+    if not all_dates:
+        print("All data is up to date.")
+        return
+
+    print(f"Dates to process: {len(all_dates)}")
+    saved_s = saved_i = skipped = 0
+
+    for i, dt in enumerate(all_dates):
+        # Refresh session every 30 requests
+        if i > 0 and i % 30 == 0:
             session = make_session()
 
-        df = fetch_one_day(session, dt)
-        if df is not None and not df.empty:
-            df.to_csv(out, index=False)
-            saved += 1
-            if is_backfill:
-                print(f"  [{i+1}/{len(dates)}] {dt} ✓  ({len(df)} rows)")
+        need_stock = dt in stock_dates
+        need_index = dt in index_dates
+
+        # Stock bhavcopy
+        if need_stock:
+            df_s = fetch_stock_bhavcopy(session, dt)
+            if df_s is not None and not df_s.empty:
+                df_s.to_csv(STOCK_DIR / f"{dt.isoformat()}.csv", index=False)
+                saved_s += 1
+                if is_backfill:
+                    print(f"  [{i+1}/{len(all_dates)}] {dt} stock ✓ ({len(df_s)} rows)")
             else:
-                print(f"  {dt} ✓  ({len(df)} rows)")
-        else:
-            skipped += 1
-            if is_backfill and i % 10 == 0:
-                print(f"  [{i+1}/{len(dates)}] {dt} – holiday/weekend, skipped")
+                skipped += 1
 
-        # Polite delay to avoid rate limiting
-        time.sleep(0.5)
+        # Index bhavcopy
+        if need_index:
+            df_i = fetch_index_bhavcopy(session, dt)
+            if df_i is not None and not df_i.empty:
+                df_i.to_csv(INDEX_DIR / f"{dt.isoformat()}.csv", index=False)
+                saved_i += 1
+                if is_backfill:
+                    print(f"  [{i+1}/{len(all_dates)}] {dt} index ✓ ({len(df_i)} indices)")
 
-    print(f"\nDone. Saved={saved}, Skipped(holidays)={skipped}")
+        if not is_backfill:
+            print(f"  {dt} → stock={'✓' if need_stock else '-'}, index={'✓' if need_index else '-'}")
 
-    # Keep only latest 280 files
-    all_files = sorted(DATA_DIR.glob("*.csv"))
-    if len(all_files) > 280:
-        for old_f in all_files[:-280]:
-            old_f.unlink()
-            print(f"Deleted old file: {old_f.name}")
+        time.sleep(0.6)
+
+    print(f"\nDone. Stocks saved={saved_s}, Indices saved={saved_i}, Skipped(holidays)={skipped}")
+
+    cleanup(STOCK_DIR)
+    cleanup(INDEX_DIR)
 
 
 if __name__ == "__main__":
