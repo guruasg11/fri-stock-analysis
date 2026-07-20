@@ -33,8 +33,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-STOCK_DIR = Path("data/stocks")
-INDEX_DIR = Path("data/index")
+STOCK_DIR = Path("data")      # existing CSVs are directly in data/
+INDEX_DIR = Path("data/index") # new index CSVs go here
 
 # ── BROAD INDICES (Tab 1) in user-requested order ─────────────────────────────
 BROAD_INDICES = [
@@ -261,7 +261,8 @@ PCT_COLS = RET_COLS
 # ── DATA LOADING ──────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_stock_history():
-    files = sorted(STOCK_DIR.glob("*.csv"))
+    import re; date_pat = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    files = sorted(f for f in STOCK_DIR.glob("*.csv") if date_pat.match(f.stem))
     if not files:
         return pd.DataFrame()
     dfs = []
