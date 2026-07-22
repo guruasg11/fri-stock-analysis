@@ -466,31 +466,100 @@ with tab1:
         return calc_index_from_stocks(label, stocks)
 
     # ── Broad Indices ──────────────────────────────────────────────────────────
-    st.subheader("Broad Market Indices")
-
-    # For broad indices we use Nifty 50 stocks as proxy since we have them
     BROAD_STOCK_MAP = {
-        "Nifty 50":           SECTORS.get("Nifty Bank",{}).get("stocks",[]),  # placeholder
-        "Nifty 500":          [],
+        "Nifty 50": [
+            "RELIANCE","HDFCBANK","BHARTIARTL","ICICIBANK","SBIN","TCS","BAJFINANCE",
+            "LT","HINDUNILVR","SUNPHARMA","INFY","MARUTI","ADANIENT","ADANIPORTS",
+            "TITAN","AXISBANK","M&M","KOTAKBANK","ITC","ULTRACEMCO","NTPC","HCLTECH",
+            "ONGC","JSWSTEEL","BEL","BAJAJFINSV","BAJAJ-AUTO","ETERNAL","COALINDIA",
+            "POWERGRID","ASIANPAINT","SHRIRAMFIN","TATASTEEL","HINDALCO","GRASIM",
+            "INDIGO","EICHERMOT","SBILIFE","WIPRO","JIOFINSERV","TRENT","TECHM",
+            "APOLLOHOSP","HDFCLIFE","TATAMOTORS","CIPLA","TATACONSUM","MAXHEALTH","DRREDDY",
+        ],
+        "Nifty Next 50": [
+            "DMART","SIEMENS","HAVELLS","PIDILITIND","DABUR","MARICO","COLPAL",
+            "GODREJCP","BRITANNIA","MUTHOOTFIN","CHOLAFIN","SHREECEM","BERGEPAINT",
+            "TORNTPHARM","LUPIN","AUROPHARMA","AMBUJACEM","IOC","DLF","GODREJPROP",
+            "OBEROIRLTY","PHOENIXLTD","PRESTIGE","FORTIS","LALPATHLAB","PERSISTENT",
+            "POLYCAB","LTTS","MPHASIS","COFORGE","CAMS","ANGELONE","BSE","MCX",
+            "VOLTAS","ASTRAL","PIIND","ZYDUSLIFE","DIXON","HAL","RVNL","IRFC","NBCC",
+        ],
+        "Nifty 100": [
+            "RELIANCE","HDFCBANK","BHARTIARTL","ICICIBANK","SBIN","TCS","BAJFINANCE",
+            "LT","HINDUNILVR","SUNPHARMA","INFY","MARUTI","ADANIENT","ADANIPORTS",
+            "TITAN","AXISBANK","M&M","KOTAKBANK","ITC","ULTRACEMCO","NTPC","HCLTECH",
+            "ONGC","JSWSTEEL","BEL","BAJAJFINSV","BAJAJ-AUTO","ETERNAL","COALINDIA",
+            "POWERGRID","ASIANPAINT","SHRIRAMFIN","TATASTEEL","HINDALCO","GRASIM",
+            "INDIGO","EICHERMOT","SBILIFE","WIPRO","JIOFINSERV","TRENT","TECHM",
+            "APOLLOHOSP","HDFCLIFE","TATAMOTORS","CIPLA","TATACONSUM","MAXHEALTH","DRREDDY",
+            "DMART","SIEMENS","HAVELLS","PIDILITIND","DABUR","MARICO","COLPAL",
+            "GODREJCP","BRITANNIA","MUTHOOTFIN","CHOLAFIN","SHREECEM","BERGEPAINT",
+            "TORNTPHARM","LUPIN","AUROPHARMA","AMBUJACEM","IOC","DLF","GODREJPROP",
+            "OBEROIRLTY","PHOENIXLTD","PRESTIGE","FORTIS","LALPATHLAB","PERSISTENT",
+            "POLYCAB","LTTS","MPHASIS","COFORGE","CAMS","ANGELONE","BSE","MCX",
+            "VOLTAS","ASTRAL","PIIND","ZYDUSLIFE","DIXON","HAL","RVNL","IRFC","NBCC",
+        ],
+        "Nifty 200": [],
+        "Nifty 500": [],
         "Nifty Total Market": [],
+        "Nifty Midcap 50": [
+            "PERSISTENT","POLYCAB","LTTS","MPHASIS","COFORGE","ZYDUSLIFE","CAMS",
+            "ANGELONE","BSE","MCX","VOLTAS","ASTRAL","PIIND","ABCAPITAL","SUNDARMFIN",
+            "FEDERALBNK","AUBANK","DIXON","AMBER","TRENT","KPITTECH","NAUKRI",
+            "JUBLFOOD","MAXHEALTH","GODREJPROP","OBEROIRLTY","PHOENIXLTD","PRESTIGE",
+            "DLF","HAVELLS","SIEMENS","BERGEPAINT","PIDILITIND","SHREECEM",
+            "TORNTPHARM","LUPIN","AUROPHARMA","CHOLAFIN","MUTHOOTFIN","RVNL",
+            "IRFC","PFC","RECLTD","HAL","BEL","BHEL","NBCC","IRB","HUDCO","AARTIIND",
+        ],
+        "Nifty Midcap 100": [
+            "PERSISTENT","POLYCAB","LTTS","MPHASIS","COFORGE","ZYDUSLIFE","CAMS",
+            "ANGELONE","BSE","MCX","VOLTAS","ASTRAL","PIIND","ABCAPITAL","SUNDARMFIN",
+            "FEDERALBNK","AUBANK","DIXON","AMBER","TRENT","KPITTECH","NAUKRI",
+            "JUBLFOOD","MAXHEALTH","GODREJPROP","OBEROIRLTY","DLF","HAVELLS","SIEMENS",
+            "BERGEPAINT","TORNTPHARM","LUPIN","AUROPHARMA","CHOLAFIN","MUTHOOTFIN",
+            "RVNL","IRFC","PFC","RECLTD","HAL","BEL","BHEL","NBCC","HUDCO",
+            "RAILTEL","IRCON","RITES","HFCL","SUZLON","NHPC","SJVN","JSWENERGY",
+            "RADICO","VBL","BIKAJI","RATNAMANI","KAJARIACER","GODREJIND","BRIGADE",
+            "SOBHA","SUNTECK","KOLTEPATIL","WELCORP","NATIONALUM","HINDCOPPER",
+            "WHIRLPOOL","BLUESTAR","CROMPTON","VGUARD","NYKAA","DELHIVERY","TATAELXSI",
+            "HAPPYMNDS","DEEPAKNTR","COROMANDEL","CHAMBLFERT","INDIAMART","METROPOLIS",
+        ],
+        "Nifty Smallcap 50": [
+            "RAILTEL","IRCON","RITES","HFCL","SUZLON","NHPC","SJVN","RADICO","VBL",
+            "BIKAJI","RATNAMANI","KAJARIACER","GODREJIND","BRIGADE","SOBHA","SUNTECK",
+            "KOLTEPATIL","MAHLIFE","WELCORP","NATIONALUM","HINDCOPPER","MOIL","NMDC",
+            "WHIRLPOOL","BLUESTAR","CROMPTON","VGUARD","NYKAA","DELHIVERY","TATAELXSI",
+            "HAPPYMNDS","MASTEK","DEEPAKNTR","COROMANDEL","CHAMBLFERT","METROPOLIS",
+        ],
+        "Nifty Smallcap 100": [
+            "RAILTEL","IRCON","RITES","HFCL","SUZLON","NHPC","SJVN","RADICO","VBL",
+            "BIKAJI","RATNAMANI","KAJARIACER","GODREJIND","BRIGADE","SOBHA","SUNTECK",
+            "KOLTEPATIL","MAHLIFE","WELCORP","NATIONALUM","HINDCOPPER","MOIL","NMDC",
+            "WHIRLPOOL","BLUESTAR","CROMPTON","VGUARD","NYKAA","DELHIVERY","TATAELXSI",
+            "HAPPYMNDS","MASTEK","DEEPAKNTR","COROMANDEL","CHAMBLFERT","METROPOLIS",
+            "APLAPOLLO","JINDALSAW","UPL","LALPATHLAB","FORTIS","MEDANTA","RAINBOW",
+            "KPITTECH","INDIAMART","NAUKRI","PGHH","JUBLFOOD","AARTIIND","ABCAPITAL",
+        ],
     }
 
+    st.subheader("Broad Market Indices")
     broad_rows = []
-    # Try from index file first
-    if has_index:
-        for idx_name in BROAD_INDICES:
+    for idx_name in BROAD_INDICES:
+        stocks = BROAD_STOCK_MAP.get(idx_name, [])
+        if has_index:
             r = calc(ih, idx_name, idx_name)
+            if r:
+                broad_rows.append(r)
+                continue
+        if stocks:
+            r = calc_index_from_stocks(idx_name, stocks)
             if r:
                 broad_rows.append(r)
 
     if broad_rows:
         show_table(pd.DataFrame(broad_rows))
     else:
-        st.info(
-            "ℹ️ Broad index files (Nifty 50 index value, Nifty 500 etc.) not yet in `data/index/`. "
-            "These will appear after the next GitHub Actions run. "
-            "See **Sectoral** tab below for sector-level data which is already available."
-        )
+        st.info("No broad index data available yet.")
 
     st.markdown("---")
 
