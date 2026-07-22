@@ -436,39 +436,80 @@ tab1, tab2, tab3 = st.tabs(["📊 Index Dashboard", "🏭 Sectoral", "⚖️ Com
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab1:
     st.header("📊 Index Dashboard")
+    st.caption("Returns and EMAs calculated from NSE official EOD data of constituent stocks")
 
-    if not has_index:
-        st.warning("Index data not yet available. Check that `data/index/` folder has CSV files.")
-    else:
-        # ── Broad Indices ──────────────────────────────────────────────────────
-        st.subheader("Broad Market Indices")
-        broad_rows = []
+    def calc_index_from_stocks(label, stocks):
+        """
+        Calculates index-level metrics by averaging constituent stock returns.
+        This works purely from stock bhavcopy - no separate index file needed.
+        """
+        rows = []
+        for sym in stocks:
+            r = calc(sh, sym)
+            if r:
+                rows.append(r)
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        num = [c for c in df.columns if c != "Name"]
+        avg = {"Name": label}
+        avg.update(df[num].mean(numeric_only=True).round(2).to_dict())
+        return avg
+
+    # Also try real index data if available
+    def get_index_row(label, idx_name, stocks):
+        if has_index:
+            r = calc(ih, idx_name, label)
+            if r:
+                return r
+        # Fall back to constituent average
+        return calc_index_from_stocks(label, stocks)
+
+    # ── Broad Indices ──────────────────────────────────────────────────────────
+    st.subheader("Broad Market Indices")
+
+    # For broad indices we use Nifty 50 stocks as proxy since we have them
+    BROAD_STOCK_MAP = {
+        "Nifty 50":           SECTORS.get("Nifty Bank",{}).get("stocks",[]),  # placeholder
+        "Nifty 500":          [],
+        "Nifty Total Market": [],
+    }
+
+    broad_rows = []
+    # Try from index file first
+    if has_index:
         for idx_name in BROAD_INDICES:
             r = calc(ih, idx_name, idx_name)
             if r:
                 broad_rows.append(r)
 
-        if broad_rows:
-            df_broad = pd.DataFrame(broad_rows)
-            show_table(df_broad)
-        else:
-            st.info("No broad index data found. Check index name spelling in data files.")
+    if broad_rows:
+        show_table(pd.DataFrame(broad_rows))
+    else:
+        st.info(
+            "ℹ️ Broad index files (Nifty 50 index value, Nifty 500 etc.) not yet in `data/index/`. "
+            "These will appear after the next GitHub Actions run. "
+            "See **Sectoral** tab below for sector-level data which is already available."
+        )
 
-        st.markdown("---")
+    st.markdown("---")
 
-        # ── Sectoral Indices ───────────────────────────────────────────────────
-        st.subheader("Sectoral Indices")
-        sectoral_rows = []
-        for sec_label, sec_data in SECTORS.items():
-            r = calc(ih, sec_data["idx"], sec_label)
-            if r:
-                sectoral_rows.append(r)
+    # ── Sectoral Indices ───────────────────────────────────────────────────────
+    st.subheader("Sectoral Indices")
+    st.caption("Calculated from constituent stock EOD prices")
 
-        if sectoral_rows:
-            df_sect = pd.DataFrame(sectoral_rows)
-            show_table(df_sect)
-        else:
-            st.info("No sectoral index data found in index files.")
+    sectoral_rows = []
+    for sec_label, sec_data in SECTORS.items():
+        # Try real index data first, fall back to constituent average
+        r = get_index_row(sec_label, sec_data["idx"], sec_data["stocks"])
+        if r:
+            sectoral_rows.append(r)
+
+    if sectoral_rows:
+        df_sect = pd.DataFrame(sectoral_rows)
+        show_table(df_sect)
+    else:
+        st.warning("No sector data available yet.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
