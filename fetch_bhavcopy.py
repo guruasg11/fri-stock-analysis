@@ -1,13 +1,12 @@
 """
 fetch_bhavcopy.py
 ─────────────────
-Downloads two types of NSE EOD data daily:
-  1. Stock bhavcopy  → data/stocks/YYYY-MM-DD.csv
+Downloads two NSE EOD files daily:
+  1. Stock bhavcopy  → data/YYYY-MM-DD.csv
   2. Index bhavcopy  → data/index/YYYY-MM-DD.csv
 
-On first run (empty data/): downloads full 1-year backfill (~260 days each).
-On daily runs: downloads only missing recent dates.
-Keeps max 280 files in each folder.
+First run: downloads full 1-year backfill (~260 days).
+Daily run: downloads only missing recent dates.
 """
 
 import io, time, zipfile
@@ -19,7 +18,6 @@ import pandas as pd
 
 STOCK_DIR = Path("data")
 INDEX_DIR = Path("data/index")
-
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 HEADERS = {
@@ -28,9 +26,10 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept":          "*/*",
+    "Accept":          "text/html,application/xhtml+xml,*/*;q=0.9",
     "Accept-Language": "en-US,en;q=0.9",
     "Referer":         "https://www.nseindia.com/",
+    "Connection":      "keep-alive",
 }
 
 
@@ -39,43 +38,48 @@ def make_session():
     s.headers.update(HEADERS)
     for _ in range(3):
         try:
-            s.get("https://www.nseindia.com", timeout=15)
-            time.sleep(1)
+            r = s.get("https://www.nseindia.com", timeout=15)
+            print(f"  NSE homepage: {r.status_code}")
+            time.sleep(2)
             break
-        except Exception:
+        except Exception as e:
+            print(f"  Session init failed: {e}")
             time.sleep(3)
     return s
 
 
-def fetch_stock_bhavcopy(session, dt: date):
-    """Returns clean stock DataFrame or None."""
-    ds = dt.strftime("%Y%m%d")
+def fetch_stock(session, dt: date):
+    """Download stock bhavcopy. Returns DataFrame or None."""
+    ds  = dt.strftime("%Y%m%d")
+    ds2 = dt.strftime("%d%m%Y")
+
     # New format (2023+)
     url = (f"https://nsearchives.nseindia.com/content/cm/"
            f"BhavCopy_NSE_CM_0_0_0_{ds}_F_0000.csv.zip")
     try:
-        r = session.get(url, timeout=30)
-        if r.status_code == 200:
+        r = session.get(url, timeout=40)
+        if r.status_code == 200 and len(r.content) > 1000:
             with zipfile.ZipFile(io.BytesIO(r.content)) as z:
                 with z.open(z.namelist()[0]) as f:
                     df = pd.read_csv(f, low_memory=False)
             df.columns = df.columns.str.strip()
             if "SctySrs" in df.columns:
                 df = df[df["SctySrs"].astype(str).str.strip() == "EQ"]
-            keep = ["TckrSymb","SctySrs","HghPric","LwPric","ClsPric","PrvsClsgPric","TtlTradgVol"]
+            keep = ["TckrSymb","SctySrs","HghPric","LwPric",
+                    "ClsPric","PrvsClsgPric","TtlTradgVol"]
             df = df[[c for c in keep if c in df.columns]].copy()
             df["TradDt"] = dt.isoformat()
-            return df
-    except Exception:
-        pass
+            if len(df) > 100:
+                return df
+    except Exception as e:
+        print(f"    New format error: {e}")
 
     # Old format fallback
-    ds2 = dt.strftime("%d%m%Y")
     url2 = (f"https://nsearchives.nseindia.com/products/content/"
-            f"sec_bhavdata_full_{ds2}.csv")
+             f"sec_bhavdata_full_{ds2}.csv")
     try:
-        r = session.get(url2, timeout=30)
-        if r.status_code == 200:
+        r = session.get(url2, timeout=40)
+        if r.status_code == 200 and len(r.content) > 1000:
             df = pd.read_csv(io.StringIO(r.text), low_memory=False)
             df.columns = df.columns.str.strip()
             df = df.rename(columns={
@@ -86,113 +90,127 @@ def fetch_stock_bhavcopy(session, dt: date):
             })
             if "SctySrs" in df.columns:
                 df = df[df["SctySrs"].astype(str).str.strip() == "EQ"]
-            keep = ["TckrSymb","SctySrs","HghPric","LwPric","ClsPric","PrvsClsgPric","TtlTradgVol"]
+            keep = ["TckrSymb","SctySrs","HghPric","LwPric",
+                    "ClsPric","PrvsClsgPric","TtlTradgVol"]
             df = df[[c for c in keep if c in df.columns]].copy()
             df["TradDt"] = dt.isoformat()
-            return df
-    except Exception:
-        pass
+            if len(df) > 100:
+                return df
+    except Exception as e:
+        print(f"    Old format error: {e}")
+
     return None
 
 
-def fetch_index_bhavcopy(session, dt: date):
-    """Returns index closing DataFrame or None."""
+def fetch_index(session, dt: date):
+    """Download index bhavcopy. Returns DataFrame or None."""
     ds = dt.strftime("%d%m%Y")
-    url = f"https://nsearchives.nseindia.com/content/indices/ind_close_all_{ds}.csv"
+    url = (f"https://nsearchives.nseindia.com/content/indices/"
+           f"ind_close_all_{ds}.csv")
     try:
-        r = session.get(url, timeout=30)
-        if r.status_code == 200:
+        r = session.get(url, timeout=40)
+        if r.status_code == 200 and len(r.content) > 500:
             df = pd.read_csv(io.StringIO(r.text), low_memory=False)
             df.columns = df.columns.str.strip()
             if "Index Name" not in df.columns:
                 return None
-            df = df.rename(columns={"Index Name": "TckrSymb", "Closing": "ClsPric"})
-            df["TradDt"] = dt.isoformat()
+            # Keep only needed columns
+            keep_cols = ["Index Name","Open","High","Low","Closing",
+                         "Points Change","Change(%)"]
+            df = df[[c for c in keep_cols if c in df.columns]].copy()
+            df = df.rename(columns={
+                "Index Name": "TckrSymb",
+                "Closing":    "ClsPric",
+            })
+            df["TradDt"]  = dt.isoformat()
             df["ClsPric"] = pd.to_numeric(df["ClsPric"], errors="coerce")
-            return df[["TradDt","TckrSymb","ClsPric"]].dropna(subset=["ClsPric"])
-    except Exception:
-        pass
+            df = df.dropna(subset=["ClsPric"])
+            if len(df) > 5:
+                return df
+    except Exception as e:
+        print(f"    Index error: {e}")
     return None
 
 
-def get_dates_to_fetch(folder: Path, is_backfill: bool) -> list:
-    existing = {f.stem for f in folder.glob("*.csv")}
-    today    = date.today()
-    if is_backfill:
-        start = today - timedelta(days=400)
-        end   = today - timedelta(days=1)
-    else:
-        start = today - timedelta(days=7)
-        end   = today
-    dates = [d.date() for d in pd.bdate_range(start=start, end=end)]
-    return [d for d in dates if d.isoformat() not in existing]
+def get_missing_dates(folder: Path, is_backfill: bool) -> list:
+    import re
+    date_pat  = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    existing  = {f.stem for f in folder.glob("*.csv") if date_pat.match(f.stem)}
+    today     = date.today()
+    start     = today - timedelta(days=400) if is_backfill else today - timedelta(days=7)
+    end       = today - timedelta(days=1)
+    all_bdays = [d.date() for d in pd.bdate_range(start=start, end=end)]
+    return [d for d in all_bdays if d.isoformat() not in existing]
 
 
 def cleanup(folder: Path, keep: int = 280):
-    files = sorted(folder.glob("*.csv"))
+    import re
+    date_pat = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    files = sorted(f for f in folder.glob("*.csv") if date_pat.match(f.stem))
     for old in files[:-keep]:
         old.unlink()
         print(f"  [DEL] {old.name}")
 
 
 def main():
-    stock_existing = list(STOCK_DIR.glob("*.csv"))
-    index_existing = list(INDEX_DIR.glob("*.csv"))
+    import re
+    date_pat = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    stock_existing = [f for f in STOCK_DIR.glob("*.csv") if date_pat.match(f.stem)]
     is_backfill    = len(stock_existing) == 0
 
     if is_backfill:
-        print("=== FIRST RUN: Backfilling 1 year ===")
+        print("=== FIRST RUN: Full backfill (1 year) ===")
     else:
         print("=== DAILY UPDATE ===")
+        print(f"Existing stock files: {len(stock_existing)}")
 
-    session = make_session()
-
-    stock_dates = get_dates_to_fetch(STOCK_DIR, is_backfill)
-    index_dates = get_dates_to_fetch(INDEX_DIR, is_backfill)
-    all_dates   = sorted(set(stock_dates) | set(index_dates))
+    stock_dates  = get_missing_dates(STOCK_DIR, is_backfill)
+    index_dates  = get_missing_dates(INDEX_DIR, is_backfill)
+    all_dates    = sorted(set(stock_dates) | set(index_dates))
 
     if not all_dates:
-        print("All data is up to date.")
+        print("All data up to date. Nothing to do.")
         return
 
     print(f"Dates to process: {len(all_dates)}")
+    session = make_session()
     saved_s = saved_i = skipped = 0
 
     for i, dt in enumerate(all_dates):
-        # Refresh session every 30 requests
-        if i > 0 and i % 30 == 0:
+        # Refresh session every 25 requests
+        if i > 0 and i % 25 == 0:
+            print(f"  Refreshing session at {i}/{len(all_dates)}...")
             session = make_session()
 
         need_stock = dt in stock_dates
         need_index = dt in index_dates
+        s_ok = i_ok = False
 
-        # Stock bhavcopy
         if need_stock:
-            df_s = fetch_stock_bhavcopy(session, dt)
-            if df_s is not None and not df_s.empty:
-                df_s.to_csv(STOCK_DIR / f"{dt.isoformat()}.csv", index=False)
-                saved_s += 1
-                if is_backfill:
-                    print(f"  [{i+1}/{len(all_dates)}] {dt} stock ✓ ({len(df_s)} rows)")
-            else:
-                skipped += 1
+            out = STOCK_DIR / f"{dt.isoformat()}.csv"
+            if not out.exists():
+                df = fetch_stock(session, dt)
+                if df is not None:
+                    df.to_csv(out, index=False)
+                    saved_s += 1
+                    s_ok = True
+                else:
+                    skipped += 1
 
-        # Index bhavcopy
         if need_index:
-            df_i = fetch_index_bhavcopy(session, dt)
-            if df_i is not None and not df_i.empty:
-                df_i.to_csv(INDEX_DIR / f"{dt.isoformat()}.csv", index=False)
-                saved_i += 1
-                if is_backfill:
-                    print(f"  [{i+1}/{len(all_dates)}] {dt} index ✓ ({len(df_i)} indices)")
+            out = INDEX_DIR / f"{dt.isoformat()}.csv"
+            if not out.exists():
+                df = fetch_index(session, dt)
+                if df is not None:
+                    df.to_csv(out, index=False)
+                    saved_i += 1
+                    i_ok = True
 
-        if not is_backfill:
-            print(f"  {dt} → stock={'✓' if need_stock else '-'}, index={'✓' if need_index else '-'}")
+        status = f"stock={'✓' if s_ok else ('–' if not need_stock else '✗')}  index={'✓' if i_ok else ('–' if not need_index else '✗')}"
+        print(f"  [{i+1:3}/{len(all_dates)}] {dt}  {status}")
+        time.sleep(0.8)
 
-        time.sleep(0.6)
-
-    print(f"\nDone. Stocks saved={saved_s}, Indices saved={saved_i}, Skipped(holidays)={skipped}")
-
+    print(f"\nDone. Stocks saved={saved_s}, Index saved={saved_i}, Skipped={skipped}")
     cleanup(STOCK_DIR)
     cleanup(INDEX_DIR)
 
