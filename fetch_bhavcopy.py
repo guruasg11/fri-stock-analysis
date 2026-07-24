@@ -174,13 +174,21 @@ def cleanup(folder: Path, keep: int = 280):
 
 def main():
     stock_existing = [f for f in STOCK_DIR.glob("*.csv") if DATE_PAT.match(f.stem)]
-    is_backfill    = len(stock_existing) == 0
+    index_existing = [f for f in INDEX_DIR.glob("*.csv") if DATE_PAT.match(f.stem)]
 
-    print(f"=== {'FIRST RUN BACKFILL' if is_backfill else 'DAILY UPDATE'} ===")
-    print(f"Stock files: {len(stock_existing)}")
+    # Detect backfill independently for stocks and index
+    # README.md does NOT count as a data file - only YYYY-MM-DD.csv files count
+    stock_backfill = len(stock_existing) == 0
+    index_backfill = len(index_existing) < 5   # fewer than 5 = needs full backfill
 
-    stock_dates = get_missing(STOCK_DIR, is_backfill)
-    index_dates = get_missing(INDEX_DIR, is_backfill)
+    is_backfill = stock_backfill or index_backfill
+
+    print(f"=== {'BACKFILL' if is_backfill else 'DAILY UPDATE'} ===")
+    print(f"Stock files: {len(stock_existing)} (backfill={stock_backfill})")
+    print(f"Index files: {len(index_existing)} (backfill={index_backfill})")
+
+    stock_dates = get_missing(STOCK_DIR, stock_backfill)
+    index_dates = get_missing(INDEX_DIR, index_backfill)
     all_dates   = sorted(set(stock_dates) | set(index_dates))
 
     if not all_dates:
