@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, master ]
   schedule:
-    - cron: '0 11 * * 1-5'   # 4:30 PM IST (11:00 UTC) Mon-Fri
+    - cron: '0 11 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -19,6 +19,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -28,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas
 
-      - name: Fetch NSE bhavcopy (stocks + indices)
+      - name: Fetch NSE bhavcopy
         run: python fetch_bhavcopy.py
 
       - name: Commit and push data
@@ -39,6 +40,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "Nothing new to commit."
           else
+            git pull --rebase origin main
             git commit -m "EOD data: $(date +'%Y-%m-%d %H:%M UTC')"
-            git push origin HEAD:${{ github.ref_name }}
+            git push origin HEAD:main
           fi
