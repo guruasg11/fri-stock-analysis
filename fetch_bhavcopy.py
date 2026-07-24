@@ -179,7 +179,9 @@ def main():
     # Detect backfill independently for stocks and index
     # README.md does NOT count as a data file - only YYYY-MM-DD.csv files count
     stock_backfill = len(stock_existing) == 0
-    index_backfill = len(index_existing) < 5   # fewer than 5 = needs full backfill
+    # If fewer than 200 index files, we don't have a full year - run backfill
+    index_backfill = len(index_existing) < 200
+    print(f"Index backfill needed: {index_backfill} (have {len(index_existing)}, need 200+)")
 
     is_backfill = stock_backfill or index_backfill
 
