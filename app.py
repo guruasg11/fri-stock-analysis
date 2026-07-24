@@ -303,10 +303,18 @@ def load_index_history():
         try:
             df = pd.read_csv(f, low_memory=False)
             df.columns = df.columns.str.strip()
-            if "Index Name" not in df.columns:
+            # Handle both column name formats NSE has used over the years
+            df = df.rename(columns={
+                "Index Name":          "TckrSymb",
+                "Closing Index Value": "ClsPric",
+                "Closing":             "ClsPric",
+            })
+            if "TckrSymb" not in df.columns or "ClsPric" not in df.columns:
                 continue
-            df = df.rename(columns={"Closing": "ClsPric", "Index Name": "TckrSymb"})
-            df["TradDt"] = f.stem
+            df["TradDt"]   = f.stem
+            df["ClsPric"]  = pd.to_numeric(df["ClsPric"], errors="coerce")
+            df["TckrSymb"] = df["TckrSymb"].astype(str).str.strip()
+            df = df.dropna(subset=["ClsPric"])
             dfs.append(df[["TradDt","TckrSymb","ClsPric"]])
         except Exception:
             continue
