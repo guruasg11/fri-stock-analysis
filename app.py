@@ -394,7 +394,7 @@ def show_table(df, cap=20):
     cols_order = ["Name","LTP"] + RET_COLS + EMA_COLS + ["52W High","vs 52WH%","52W Low","vs 52WL%"]
     cols_show  = [c for c in cols_order if c in df.columns]
     st.dataframe(style_table(df[cols_show], ALL_PCT, cap),
-                 use_container_width=True, height=min(600, 60 + len(df)*38))
+                 width='stretch', height=min(600, 60 + len(df)*38))
 
 
 # ── LOAD DATA ─────────────────────────────────────────────────────────────────
@@ -547,7 +547,7 @@ with tab2:
             cols = st.columns(len(row_sectors))
             for col, sec in zip(cols, row_sectors):
                 with col:
-                    if st.button(sec, key=f"sec_{sec}", use_container_width=True):
+                    if st.button(sec, key=f"sec_{sec}", width='stretch'):
                         st.session_state.sector_view = sec
                         st.rerun()
     else:
