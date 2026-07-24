@@ -270,14 +270,32 @@ def load_stock_history():
         try:
             df = pd.read_csv(f, low_memory=False)
             df.columns = df.columns.str.strip()
+            # Handle all NSE bhavcopy column name variants
             df = df.rename(columns={
-                "SYMBOL":"TckrSymb","SERIES":"SctySrs",
-                "HIGH":"HghPric","LOW":"LwPric",
-                "CLOSE":"ClsPric","PREVCLOSE":"PrvsClsgPric",
+                "SYMBOL":    "TckrSymb",
+                "SERIES":    "SctySrs",
+                "HIGH":      "HghPric",
+                "LOW":       "LwPric",
+                "CLOSE":     "ClsPric",
+                "PREVCLOSE": "PrvsClsgPric",
+                "OPEN":      "OpnPric",
+                # Some old files use these names
+                "Symbol":    "TckrSymb",
+                "Series":    "SctySrs",
+                "High":      "HghPric",
+                "Low":       "LwPric",
+                "Close":     "ClsPric",
+                "Prev Close":"PrvsClsgPric",
             })
             if "TradDt" not in df.columns:
                 df["TradDt"] = f.stem
-            dfs.append(df)
+            # Ensure price columns are numeric
+            for c in ["ClsPric","HghPric","LwPric","PrvsClsgPric"]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+                else:
+                    df[c] = np.nan
+            dfs.append(df[["TradDt","TckrSymb","SctySrs","ClsPric","HghPric","LwPric","PrvsClsgPric"]])
         except Exception:
             continue
     if not dfs:
@@ -339,10 +357,21 @@ def calc(hist, sym, label=None):
              else float(close[-2]))
     cs = pd.Series(close)
 
+    # Date-based return: find exact trading day n days before last date
+    # This is accurate even when some holiday dates are missing from data
+    last_dt = df["TradDt"].iloc[-1]
+    dates   = df["TradDt"].values  # sorted ascending
+
     def ret(n):
-        if len(close) <= n: return np.nan
-        p = float(close[-(n+1)])
-        return round(((ltp-p)/p)*100, 2) if p else np.nan
+        """Return n trading-days ago using actual dates, not row index."""
+        target = last_dt - pd.Timedelta(days=int(n * 365.25 / 252) + n)
+        # Find the closest available date on or before target
+        mask = dates <= target
+        if not mask.any():
+            return np.nan
+        idx_pos = int(np.where(mask)[0][-1])
+        p = float(close[idx_pos])
+        return round(((ltp - p) / p) * 100, 2) if p else np.nan
 
     def ema(span):
         return round(float(cs.ewm(span=span, adjust=False).mean().iloc[-1]), 2)
@@ -591,96 +620,285 @@ with tab2:
 # TAB 3 – COMPARE
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab3:
-    st.header("⚖️ Compare Indices & Stocks")
-    st.caption("Add any combination of indices and stocks. Press Enter after each.")
 
-    col_l, col_r = st.columns(2)
+    # ── Session state ──────────────────────────────────────────────────────────
+    if "cmp_stocks"  not in st.session_state: st.session_state.cmp_stocks  = []
+    if "cmp_indices" not in st.session_state: st.session_state.cmp_indices = []
+    if "cmp_view"    not in st.session_state: st.session_state.cmp_view    = None
+    # cmp_view = None (main compare page) | ("index", name) | ("stock", sym)
 
-    with col_l:
-        st.markdown("**📊 Add Indices**")
-        idx_input = st.selectbox(
-            "Search and select an index",
-            options=[""] + ALL_INDEX_NAMES,
-            key="idx_sel",
+    # ── Navigation ─────────────────────────────────────────────────────────────
+    if st.session_state.cmp_view is not None:
+        if st.button("← Back to Compare", key="cmp_back"):
+            st.session_state.cmp_view = None
+            st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # DETAIL VIEW — opened when user clicks an index or stock row
+    # ══════════════════════════════════════════════════════════════════════════
+    if st.session_state.cmp_view is not None:
+        view_type, view_name = st.session_state.cmp_view
+
+        if view_type == "index":
+            # Find sector data
+            sec_data = SECTORS.get(view_name)
+
+            st.header(f"📊 {view_name}")
+
+            # Index row at top
+            if has_index:
+                nse_name = SECTOR_NSE_NAME.get(view_name, view_name) if "SECTOR_NSE_NAME" in dir() else view_name
+                idx_row  = calc(ih, nse_name, f"▶ {view_name} INDEX")
+                if not idx_row:
+                    # Try broad index
+                    idx_row = calc(ih, view_name, f"▶ {view_name}")
+                if idx_row:
+                    st.subheader("Index")
+                    show_table(pd.DataFrame([idx_row]))
+
+            # Constituent stocks
+            if sec_data:
+                stocks    = sec_data["stocks"]
+                available = [s for s in stocks if s in all_syms]
+                missing   = [s for s in stocks if s not in all_syms]
+                if missing:
+                    st.caption(f"ℹ️ Not in data: {', '.join(missing)}")
+                if available and has_stocks:
+                    st.subheader("Constituent Stocks")
+                    df_s = build_rows(sh, available)
+                    if not df_s.empty:
+                        num_c = [c for c in df_s.columns if c != "Name"]
+                        avg   = {"Name": f"📊 {view_name} AVG"}
+                        avg.update(df_s[num_c].mean(numeric_only=True).round(2).to_dict())
+                        show_table(pd.concat([pd.DataFrame([avg]), df_s], ignore_index=True))
+            else:
+                # Broad index - show description
+                st.info("Constituent stock list not available for broad indices.")
+
+        elif view_type == "stock":
+            sym = view_name
+            st.header(f"🏷️ {sym}")
+            if has_stocks:
+                r = calc(sh, sym, sym)
+                if r:
+                    show_table(pd.DataFrame([r]))
+                else:
+                    st.warning(f"{sym} not found in data.")
+
+        st.stop()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # MAIN COMPARE PAGE
+    # ══════════════════════════════════════════════════════════════════════════
+    st.header("⚖️ Compare")
+    st.caption("Add indices and stocks. Click any row to drill into details.")
+
+    left, right = st.columns([1, 2], gap="large")
+
+    # ── LEFT PANEL: INPUT ──────────────────────────────────────────────────────
+    with left:
+        # ── Index input ────────────────────────────────────────────────────────
+        st.markdown("#### 📊 Add Index")
+        idx_input = st.text_input(
+            "Type index name (e.g. Nifty Bank)",
+            key="cmp_idx_inp",
+            placeholder="e.g. Nifty Bank, Nifty IT",
             label_visibility="collapsed",
-        )
-        if st.button("➕ Add Index") and idx_input:
-            if idx_input not in st.session_state.compare_indices:
-                st.session_state.compare_indices.append(idx_input)
-        if st.session_state.compare_indices:
-            for i, name in enumerate(st.session_state.compare_indices):
+        ).strip()
+
+        # Autocomplete suggestions
+        if idx_input:
+            matches = [n for n in ALL_INDEX_NAMES
+                       if idx_input.lower() in n.lower()][:6]
+            for m in matches:
+                if st.button(m, key=f"idx_sug_{m}"):
+                    if m not in st.session_state.cmp_indices:
+                        st.session_state.cmp_indices.append(m)
+                    st.rerun()
+
+        col_ai, col_ci = st.columns(2)
+        with col_ai:
+            if st.button("➕ Add Index", key="add_idx") and idx_input:
+                # Find best match
+                exact = [n for n in ALL_INDEX_NAMES if idx_input.lower() == n.lower()]
+                fuzzy = [n for n in ALL_INDEX_NAMES if idx_input.lower() in n.lower()]
+                match = (exact or fuzzy or [None])[0]
+                if match and match not in st.session_state.cmp_indices:
+                    st.session_state.cmp_indices.append(match)
+                    st.rerun()
+                elif not match:
+                    st.warning(f"No index matching '{idx_input}'")
+        with col_ci:
+            if st.button("🗑 Clear Idx", key="clr_idx"):
+                st.session_state.cmp_indices = []
+                st.rerun()
+
+        if st.session_state.cmp_indices:
+            st.markdown("**Selected indices:**")
+            for i, name in enumerate(st.session_state.cmp_indices):
                 c1, c2 = st.columns([4, 1])
                 c1.markdown(f"• {name}")
-                if c2.button("✕", key=f"ri_{i}"):
-                    st.session_state.compare_indices.pop(i)
+                if c2.button("✕", key=f"del_idx_{i}"):
+                    st.session_state.cmp_indices.pop(i)
                     st.rerun()
 
-    with col_r:
-        st.markdown("**🏷️ Add Stocks**")
+        st.markdown("---")
+
+        # ── Stock input ────────────────────────────────────────────────────────
+        st.markdown("#### 🏷️ Add Stock")
         stk_input = st.text_input(
-            "Type NSE symbol (e.g. RELIANCE) and press Add",
-            key="stk_inp",
+            "Type NSE symbol",
+            key="cmp_stk_inp",
+            placeholder="e.g. RELIANCE, TCS, INFY",
             label_visibility="collapsed",
-            placeholder="e.g. RELIANCE",
         ).upper().strip()
-        if st.button("➕ Add Stock") and stk_input:
-            if stk_input not in st.session_state.compare_stocks:
-                st.session_state.compare_stocks.append(stk_input)
-        if st.session_state.compare_stocks:
-            for i, sym in enumerate(st.session_state.compare_stocks):
+
+        # Fuzzy match from loaded symbols
+        if stk_input and has_stocks:
+            sym_matches = [s for s in all_syms
+                           if stk_input in s][:6]
+            for m in sym_matches:
+                if st.button(m, key=f"stk_sug_{m}"):
+                    if m not in st.session_state.cmp_stocks:
+                        st.session_state.cmp_stocks.append(m)
+                    st.rerun()
+
+        col_as, col_cs = st.columns(2)
+        with col_as:
+            if st.button("➕ Add Stock", key="add_stk") and stk_input:
+                # Accept comma-separated input
+                syms = [s.strip().upper() for s in stk_input.split(",") if s.strip()]
+                for s in syms:
+                    if s not in st.session_state.cmp_stocks:
+                        st.session_state.cmp_stocks.append(s)
+                st.rerun()
+        with col_cs:
+            if st.button("🗑 Clear Stk", key="clr_stk"):
+                st.session_state.cmp_stocks = []
+                st.rerun()
+
+        if st.session_state.cmp_stocks:
+            st.markdown("**Selected stocks:**")
+            for i, sym in enumerate(st.session_state.cmp_stocks):
                 c1, c2 = st.columns([4, 1])
                 c1.markdown(f"• {sym}")
-                if c2.button("✕", key=f"rs_{i}"):
-                    st.session_state.compare_stocks.pop(i)
+                if c2.button("✕", key=f"del_stk_{i}"):
+                    st.session_state.cmp_stocks.pop(i)
                     st.rerun()
 
-    if st.button("🗑 Clear All"):
-        st.session_state.compare_indices = []
-        st.session_state.compare_stocks  = []
-        st.rerun()
-
-    all_selected = st.session_state.compare_indices + st.session_state.compare_stocks
-
-    if not all_selected:
-        st.info("Add indices and/or stocks above to compare them side-by-side.")
-    else:
         st.markdown("---")
-        st.subheader("Comparison Table")
+        if st.button("🔍 Compare", type="primary", key="do_compare"):
+            pass  # triggers rerun, results show in right panel
 
-        rows = []
-        for name in st.session_state.compare_indices:
-            r = calc(ih, name, name) if has_index else None
-            if r:
-                rows.append(r)
-            else:
-                rows.append({"Name": f"{name} (no data)"})
+    # ── RIGHT PANEL: RESULTS ──────────────────────────────────────────────────
+    with right:
+        has_selection = st.session_state.cmp_indices or st.session_state.cmp_stocks
 
-        for sym in st.session_state.compare_stocks:
-            r = calc(sh, sym, sym) if has_stocks else None
-            if r:
-                rows.append(r)
-            else:
-                rows.append({"Name": f"{sym} (not found)"})
+        if not has_selection:
+            st.markdown("#### Results will appear here")
+            st.info("Add indices or stocks on the left and click **Compare**.")
+        else:
+            # ── Indices table ──────────────────────────────────────────────────
+            if st.session_state.cmp_indices:
+                st.markdown("#### 📊 Indices")
+                SECTOR_NSE_NAME_LOCAL = {
+                    "Nifty Bank":                    "Nifty Bank",
+                    "Nifty PSU Bank":                "Nifty PSU Bank",
+                    "Nifty Private Bank":            "Nifty Private Bank",
+                    "Nifty Financial Services":      "Nifty Financial Services",
+                    "Nifty Housing Finance":         "Nifty Housing Finance",
+                    "Nifty Insurance":               "Nifty India Insurance",
+                    "Nifty Energy":                  "Nifty Energy",
+                    "Nifty Oil & Gas":               "Nifty Oil and Gas",
+                    "Nifty Power":                   "Nifty Power",
+                    "Nifty Auto":                    "Nifty Auto",
+                    "Nifty FMCG":                    "Nifty FMCG",
+                    "Nifty IT":                      "Nifty IT",
+                    "Nifty Metal":                   "Nifty Metal",
+                    "Nifty Pharma":                  "Nifty Pharma",
+                    "Nifty Healthcare":              "Nifty Healthcare Index",
+                    "Nifty Realty":                  "Nifty Realty",
+                    "Nifty Media":                   "Nifty Media",
+                    "Nifty Capital Goods":           "Nifty India Manufacturing",
+                    "Nifty Consumer Durables":       "Nifty Consumer Durables",
+                    "Nifty Defence":                 "Nifty India Defence",
+                    "Nifty Commodities":             "Nifty Commodities",
+                    "Nifty Capital Markets":         "Nifty Capital Markets",
+                    "Nifty 50":                      "Nifty 50",
+                    "Nifty Next 50":                 "Nifty Next 50",
+                    "Nifty 100":                     "Nifty 100",
+                    "Nifty 200":                     "Nifty 200",
+                    "Nifty 500":                     "Nifty 500",
+                    "Nifty Total Market":            "Nifty Total Market",
+                    "Nifty Midcap 50":               "Nifty Midcap 50",
+                    "Nifty Midcap 100":              "Nifty Midcap 100",
+                    "Nifty Smallcap 50":             "Nifty Smallcap 50",
+                    "Nifty Smallcap 100":            "Nifty Smallcap 100",
+                }
+                idx_rows = []
+                for name in st.session_state.cmp_indices:
+                    nse_name = SECTOR_NSE_NAME_LOCAL.get(name, name)
+                    r = calc(ih, nse_name, name) if has_index else None
+                    if r:
+                        idx_rows.append(r)
+                    else:
+                        idx_rows.append({"Name": f"{name} (no index data yet)"})
 
-        if rows:
-            df_cmp = pd.DataFrame(rows)
-            show_table(df_cmp)
+                df_idx = pd.DataFrame(idx_rows)
+                show_table(df_idx)
 
-        # Relative performance chart
-        if len(all_selected) >= 2 and (has_stocks or has_index):
-            st.markdown("---")
-            st.subheader("Relative Performance (Rebased to 100)")
-            chart_data = {}
-            for name in st.session_state.compare_indices:
-                if has_index:
-                    df_i = ih[ih["TckrSymb"]==name].sort_values("TradDt").set_index("TradDt")["ClsPric"]
-                    if not df_i.empty:
-                        chart_data[name] = (df_i / df_i.iloc[0] * 100)
-            for sym in st.session_state.compare_stocks:
-                if has_stocks:
-                    df_s = sh[sh["TckrSymb"]==sym].sort_values("TradDt").set_index("TradDt")["ClsPric"]
-                    if not df_s.empty:
-                        chart_data[sym] = (df_s / df_s.iloc[0] * 100)
-            if chart_data:
-                df_chart = pd.DataFrame(chart_data).dropna(how="all")
-                st.line_chart(df_chart, height=350)
+                st.caption("💡 Click an index name below to see its constituent stocks")
+                for name in st.session_state.cmp_indices:
+                    if name in SECTORS or name in BROAD_INDICES:
+                        if st.button(f"🔍 View {name} stocks", key=f"view_idx_{name}"):
+                            st.session_state.cmp_view = ("index", name)
+                            st.rerun()
+
+            # ── Stocks table ───────────────────────────────────────────────────
+            if st.session_state.cmp_stocks:
+                st.markdown("#### 🏷️ Stocks")
+                stk_rows = []
+                for sym in st.session_state.cmp_stocks:
+                    r = calc(sh, sym, sym) if has_stocks else None
+                    if r:
+                        stk_rows.append(r)
+                    else:
+                        stk_rows.append({"Name": f"{sym} (not in data)"})
+
+                df_stk = pd.DataFrame(stk_rows)
+                show_table(df_stk)
+
+                for sym in st.session_state.cmp_stocks:
+                    if st.button(f"🔍 View {sym} detail", key=f"view_stk_{sym}"):
+                        st.session_state.cmp_view = ("stock", sym)
+                        st.rerun()
+
+            # ── Relative performance chart ─────────────────────────────────────
+            total_items = len(st.session_state.cmp_indices) + len(st.session_state.cmp_stocks)
+            if total_items >= 2:
+                st.markdown("---")
+                st.markdown("#### 📈 Relative Performance (Rebased to 100)")
+                chart_data = {}
+
+                for name in st.session_state.cmp_indices:
+                    nse_name = SECTOR_NSE_NAME_LOCAL.get(name, name)
+                    if has_index:
+                        df_i = (ih[ih["TckrSymb"] == nse_name]
+                                .sort_values("TradDt")
+                                .set_index("TradDt")["ClsPric"]
+                                .dropna())
+                        if not df_i.empty:
+                            chart_data[name] = (df_i / df_i.iloc[0] * 100)
+
+                for sym in st.session_state.cmp_stocks:
+                    if has_stocks:
+                        df_s = (sh[sh["TckrSymb"] == sym]
+                                .sort_values("TradDt")
+                                .set_index("TradDt")["ClsPric"]
+                                .dropna())
+                        if not df_s.empty:
+                            chart_data[sym] = (df_s / df_s.iloc[0] * 100)
+
+                if chart_data:
+                    df_chart = pd.DataFrame(chart_data).dropna(how="all")
+                    st.line_chart(df_chart, height=350)
